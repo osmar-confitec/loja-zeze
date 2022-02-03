@@ -1,0 +1,436 @@
+arquitetura de microserviços 
+
+	apiGateways -> local onde ficara as apis que farão os redirecionamentos 
+	buildingBlocks
+		BuildBlockCore -> local onde ficará nossos métodos e classes utilizados em outras apis obs utilizar o domain aqui
+		BuildBlockMessageBus -> contem os metodos para a messageria para todas as apis
+		BuildBlockServices -> contém todos os métodos para os services para todas apis
+	services
+		
+	web-> ou SPA
+
+
+comando para instalar o rabbit mq docker run -d --hostname rabbit-host --name rabbit-local -p 15672:15672 -p 5672:5672 rabbitmq:management 
+
+docker file arquitetura
+
+#See https://aka.ms/containerfastmode to understand how Visual Studio uses this Dockerfile to build your images for faster debugging.
+
+FROM mcr.microsoft.com/dotnet/aspnet:5.0 AS base -> imagem mae {AS base alias da imagem}
+WORKDIR /app ->diretorio que vai enxergar
+EXPOSE 80 ->porta exposta
+EXPOSE 443 ->porta exposta
+
+FROM mcr.microsoft.com/dotnet/sdk:5.0 AS build
+WORKDIR /src
+COPY ["src/web/WebZeZe/WebZeZe.csproj", "src/web/WebZeZe/"]
+RUN dotnet restore "src/web/WebZeZe/WebZeZe.csproj"
+COPY . .
+WORKDIR "/src/src/web/WebZeZe"
+RUN dotnet build "WebZeZe.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "WebZeZe.csproj" -c Release -o /app/publish
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "WebZeZe.dll"]
+
+no docker compose será setado o contexto no docker file corrigido ficará dessa forma
+
+FROM mcr.microsoft.com/dotnet/aspnet:5.0 AS base -> imagem mae {AS base alias da imagem}
+WORKDIR /app ->diretorio que vai enxergar
+EXPOSE 80 ->porta exposta
+EXPOSE 443 ->porta exposta
+
+FROM mcr.microsoft.com/dotnet/sdk:5.0 AS build
+WORKDIR /src
+COPY ["./web/WebZeZe/WebZeZe.csproj", "web/WebZeZe/"] -> é omitido o src que será o contexto e colocado ./ e no segundo par coloca-se o diretorio web/
+
+COPY ["./buildingBlocks/BuildBlockServices/BuildBlockServices.csproj", "buildingBlocks/BuildBlockServices/"] -> as dependencias precisam ser adicionadas no formato do contexto 
+COPY ["./buildingBlocks/BuildBlockCore/BuildBlockCore.csproj", "buildingBlocks/BuildBlockCore/"]
+
+RUN dotnet restore "web/WebZeZe/WebZeZe.csproj" -> é omitido o src
+COPY . .
+WORKDIR "web/WebZeZe" -> é omitido o src
+RUN dotnet build "WebZeZe.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "WebZeZe.csproj" -c Release -o /app/publish
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "WebZeZe.dll"]
+
+esse é um exemplo do docker compose 
+
+ web-mvc:
+       image: zeze-solutions/zeze-webmvc:latest -> imagem
+       container_name:  zeze-webmvc -> nome do container  será utilizado para se comunicar com outras apis
+       build:
+           context: ../src -> contexto do fonte 
+           dockerfile: ./web/WebZeZe/Dockerfile -> caminho do docker file baseado no contexto
+       ports: 
+           - "5001:5001" -> porta interna no docker porta que será exposta
+       environment:
+           - ASPNETCORE_ENVIRONMENT=Development -> variavel de ambiente 
+           - ASPNETCORE_URLS=http://*:5001 -> porta que será exibida
+
+nao esqueca de arrumar os settings das apis onde :
+
+//"ApiGatewayUserUrl": "https://localhost:9090",
+  "ApiGatewayUserUrl": "http://zeze-api-gateway-users:9090", -> para chamar a api deve chamala pelo container
+ "host=rabbit-nerdstore:5672;publisherConfirms=true;timeout=30;username=nerdstore;password=nerdstore" -> para o rabbit mq
+"Server=sql-server;Database=NerdStoreEnterpriseDB;MultipleActiveResultSets=true;User Id=sa;Password=MeuDB@123" -> para o sql
+
+
+comando para rodar os containers 
+
+docker-compose -f zeze_production.yml up
+docker-compose -f zeze_production.yml up --build /*força as atualizações*/
+
+para configurar o nginx server minimamente deve-se fazer o seguinte 
+
+no visual studio deve-se configurar o startup da solução web onde vai ser aplicado o nginx 
+
+ public static void AddMvcConfiguration(this IServiceCollection services, IConfiguration configuration)
+        {
+
+            services.AddControllersWithViews();
+
+
+       ->     services.Configure<ForwardedHeadersOptions>(options =>
+            {
+                options.ForwardedHeaders =
+                    ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+            });
+
+
+        }
+
+ public static void UseMvcConfiguration(this IApplicationBuilder app, IWebHostEnvironment env)
+        {
+           -> app.UseForwardedHeaders();
+
+
+	para a imagem do docker 
+
+  nginx-server:
+    image: zeze-solutions/zeze-nginx-server:latest
+    container_name: zeze-nginx-server
+    build:
+      context: ./-> contexto é a propria pasta 
+      dockerfile: ./nginx/Dockerfile
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+
+na pasta crie o docker file 
+
+FROM nginx
+COPY nginx/nginx.prod.conf /etc/nginx/nginx.conf
+
+o arquivo de configuração é o seguinte 
+
+worker_processes auto;
+events { worker_connections 1024; }-> numero de coneccoes padrão
+
+http {
+
+    sendfile on;
+
+    upstream web-mvc {
+        server web-mvc:5001;-> porta do webapi
+    }
+
+   
+    server {
+        listen 80;
+        server_name $hostname;-> colocar o host se tiver publicado
+
+
+        location / {
+            proxy_pass         http://web-mvc;
+            proxy_redirect     off;
+            proxy_http_version 1.1;
+            proxy_set_header   Connection keep-alive;
+            proxy_set_header   Host $host;
+            proxy_set_header   X-Real-IP $remote_addr;
+            proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+            proxy_set_header   X-Forwarded-Host $server_name;
+        }
+    }
+}
+
+temos que utilizar um certificado self assigned para isso devemos baixar o open ssl e instalar
+para fazer download do open ssl segue dessa forma https://www.thesecmaster.com/procedure-to-install-openssl-on-the-windows-platform/
+o pdf é o open ssl installer
+
+https://slproweb.com/products/Win32OpenSSL.html
+
+temos que fazer a exportação do certificado 
+
+no windowns clique e busque gerenciar certificados de usuario em pessoal certificados escolha um do net core clique com o direito todas as tarefas exportar 
+selecione sim exportar chave privada
+deixar marcado as duas opções marque a caixa de senha selecione um diretorio e exporte 
+
+comando para extrair o pem ->  openssl pkcs12 -in zeze-certificate.pfx -nocerts -out zeze-certificate.pem -nodes
+
+depois do pem extrai para a chave 
+
+openssl rsa -in zeze-certificate.pem -out zeze-certificate.key
+
+e finalmente 
+
+openssl pkcs12 -in zeze-certificate.pfx -nokeys -out zeze-certificate.pem
+
+apos isso coloque todos os arquivos nos diretorios definidos 
+
+C:\Projetos\comercio-zeze\SlnZeZe\docker\nginx 
+-> zeze-certificate.key
+-> zeze-certificate.pem
+
+altere o docker files 
+
+FROM nginx
+COPY nginx/nginx.prod.conf /etc/nginx/nginx.conf
+->COPY nginx/zeze-certificate.pem /etc/nginx
+->COPY nginx/zeze-certificate.key /etc/nginx
+
+depois altere o conf 
+
+worker_processes auto;
+events { worker_connections 1024; }
+
+http {
+
+    sendfile on;
+
+    upstream web-mvc {
+        server web-mvc:5001;
+    }
+
+   -> adicione     server {
+        listen 80;
+        server_name $hostname;
+
+        location / {
+            return 301 https://$host$request_uri;
+        }    
+    }
+
+   
+    server {
+->altere        listen 443 ssl;
+        server_name $hostname;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+
+        ssl_certificate /etc/nginx/zeze-certificate.pem;
+        ssl_certificate_key /etc/nginx/zeze-certificate.key;
+->fim alteracao
+
+        location / {
+            proxy_pass         http://web-mvc;
+            proxy_redirect     off;
+            proxy_http_version 1.1;
+            proxy_set_header   Connection keep-alive;
+            proxy_set_header   Host $host;
+            proxy_set_header   X-Real-IP $remote_addr;
+            proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+            proxy_set_header   X-Forwarded-Host $server_name;
+        }
+    }
+}
+
+vamos configurar o ssl para todas as apis 
+
+para fazer isso é simples 
+
+altere o arquivo yamel para 
+
+ customer-api:
+    image: zeze-solutions/zeze-customer-api:latest
+    container_name: zeze-customer-api
+    build:
+      context: ../src
+      dockerfile: ./services/CustomerApi/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=https://+:9092;http://+9092 -> colocar a rota https 
+      - ASPNETCORE_Kestrel__Certificates__Default__Password=123456os -> apontar o password do certificado
+      - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/zeze-certificate.pfx -> apontar o arquivo pfx
+    volumes:
+      - ./certs:/https:ro -> apontar o volume do certificado
+
+o .Net verifica a assinatura do certificado para usar um self-signin certificate nas chamadas http do site utilize
+
+ services.AddHttpClient<IAuthService, AuthService>(opt =>
+            {
+                opt.BaseAddress = new Uri(configuration.GetSection("ApiGatewayUserUrl").Value);
+            })
+            .AddHttpMessageHandler<HttpClientAuthorizationDelegatingHandler>()
+           -> .ConfigureHttpMessageHandlerBuilder(b =>
+            {
+                b.PrimaryHandler = new HttpClientHandler
+                {
+                    ServerCertificateCustomValidationCallback
+                            = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                };
+            })
+            ;
+nao esqueca de fazer isso para o jwt 
+
+
+  public static void AddJWT(this IServiceCollection services)
+        {
+            // JWT Setup
+            var key = Encoding.ASCII.GetBytes(Secret);
+
+            services.AddAuthentication(x =>
+            {
+                x.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                x.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            }).AddJwtBearer(x =>
+            {
+                x.RequireHttpsMetadata = true;
+                x.SaveToken = true;
+              -> aqui ignora a validacao da certificacao  x.BackchannelHttpHandler = new HttpClientHandler { ServerCertificateCustomValidationCallback = delegate { return true; } };
+                x.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(key),
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidAudience = ValidAt,
+                    ValidIssuer = Issuer
+                };
+            });
+
+            services.AddAuthorization(options =>
+            {
+                var defaultAuthorizationPolicyBuilder = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme);
+                defaultAuthorizationPolicyBuilder = defaultAuthorizationPolicyBuilder.RequireAuthenticatedUser();
+                options.DefaultPolicy = defaultAuthorizationPolicyBuilder.Build();
+            });
+
+
+        }
+
+para fazer rpc com resiliencia
+
+using BuildBlockCore.Mediator;
+using BuildBlockCore.Mediator.Messages;
+using BuildBlockCore.Mediator.Messages.Integration;
+using BuildBlockCore.Utils;
+using BuildBlockMessageBus.MessageBus;
+using BuildBlockServices.Enum;
+using CustomerApi.Application.Commands;
+using CustomerApi.Models;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace CustomerApi.Services
+{
+    public class InsertCustomerIntegrationHandler : BackgroundService
+    {
+        private readonly IMessageBus _bus;
+        private readonly IServiceProvider _serviceProvider;
+
+        public InsertCustomerIntegrationHandler(IServiceProvider serviceProvider,
+                       IMessageBus bus)
+        {
+            _serviceProvider = serviceProvider;
+            _bus = bus;
+        }
+        private void SetResponder()
+        {
+            _bus.RespondAsync<UserInsertedIntegrationEvent, ResponseMessage>(async request =>
+                await RegisterCustomer(request));
+
+            _bus.AdvancedBus.Connected += OnConnect;
+        }
+
+        private async Task<ResponseMessage> RegisterCustomer(UserInsertedIntegrationEvent request)
+        {
+            var noty = default(LNotifications);
+            try
+            {
+                var insertCustomerCommand = new InsertCustomerCommand(notifications: noty ?? new LNotifications(),
+                                                                       _Id: request.Id,
+                                                                       name: request.Name,
+                                                                       email: request.Email,
+                                                                       cpf: request.CPF,
+                                                                       publicPlace: request.PublicPlace,
+                                                                       number: request.Number,
+                                                                       complement: request.Complement,
+                                                                       zipCode: request.ZipCode,
+                                                                       city: request.City,
+                                                                       typeAddress: (TypeAddress)request.TypeAddress,
+                                                                       district: request.District,
+                                                                       state: request.State
+                                                                       );
+
+
+                using (var scope = _serviceProvider.CreateScope())
+                {
+                    var mediator = scope.ServiceProvider.GetRequiredService<IMediatorHandler>();
+                    noty = scope.ServiceProvider.GetRequiredService<LNotifications>();
+                    noty = noty ?? new LNotifications();
+                    noty = await mediator.SendCommand(insertCustomerCommand);
+                }
+                var notResponse = new ResponseMessage(noty, null);
+                return notResponse;
+            }
+            catch (Exception ex)
+            {
+                noty = noty ?? new LNotifications();
+                noty.Add(new LNotification { Message = ex.Message , TypeNotificationNoty = TypeNotificationNoty.BreakSystem });
+                return new ResponseMessage(noty, null);
+                   
+            }
+        }
+
+        private void OnConnect(object s, EventArgs e)
+        {
+            SetResponder();
+        }
+
+        protected override Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            SetResponder();
+            return Task.CompletedTask;
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+	
+		
+
+          
+
+
+
+
+
+
+

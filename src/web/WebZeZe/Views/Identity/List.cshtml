@@ -1,0 +1,56 @@
+﻿@using  BuildBlockCore.Models
+@using  BuildBlockServices.Dto.User
+
+@model PagedDataResponse<UserListDto>
+
+
+
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th scope="col">Nome</th>
+            <th scope="col">CPF</th>
+            <th scope="col">Email</th>
+            <th scope="col">Ativo</th>
+            <th scope="col">Ações</th>
+        </tr>
+    </thead>
+    <tbody>
+
+        @foreach (var listDto in Model.Items)
+        {
+        <tr>
+            <td>
+                @listDto.Name
+            </td>
+            <td>
+                @listDto.Cpf
+            </td>
+            <td>
+                @listDto.Email
+            </td>
+            <td>
+                @if (listDto.Active)
+                {
+                    <img src="~/images/icons8-ok-30.png" />
+                }
+                else
+                {
+                    <img src="~/images/icons8-cancelar-30.png" />
+                }
+            </td>
+            <td>
+                <a asp-action="UpdateCustomer" asp-controller="Identity" asp-route-id="@listDto.Id">
+                     <img src="~/images/icons8-editar-30.png" />
+                </a>
+                <a onclick="return confirm('gostaria realmente deletar esse usuário?');"
+                   asp-action="DeleteCustomer" asp-controller="Identity" asp-route-id="@listDto.Id">
+                     <img src="~/images/icons8-excluir-30.png" />
+                </a>
+                
+            </td>
+        </tr>
+
+        }
+    </tbody>
+</table>

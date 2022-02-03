@@ -1,0 +1,73 @@
+version: "3"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbit-nerdstore
+    environment:
+      RABBITMQ_DEFAULT_USER: "guest"
+      RABBITMQ_DEFAULT_PASS: "guest"
+
+  api-gateway-user:
+    image: zeze-solutions/zeze-api-gateway-users:latest
+    container_name: zeze-api-gateway-users
+    build:
+      context: ../src
+      dockerfile: ./apiGateways/ApiGatewayUser/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=https://+:9090;http://+9090
+      - ASPNETCORE_Kestrel__Certificates__Default__Password=123456os
+      - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/zeze-certificate.pfx
+    volumes:
+      - ./certs:/https:ro
+
+  users-api:
+    image: zeze-solutions/zeze-users-api:latest
+    container_name: zeze-users-api
+    build:
+      context: ../src
+      dockerfile: ./services/UsersApi/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=https://+:9091;http://+9091
+      - ASPNETCORE_Kestrel__Certificates__Default__Password=123456os
+      - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/zeze-certificate.pfx
+    volumes:
+      - ./certs:/https:ro
+
+  customer-api:
+    image: zeze-solutions/zeze-customer-api:latest
+    container_name: zeze-customer-api
+    build:
+      context: ../src
+      dockerfile: ./services/CustomerApi/Dockerfile
+    restart: always
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=https://+:9092;http://+9092
+      - ASPNETCORE_Kestrel__Certificates__Default__Password=123456os
+      - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/zeze-certificate.pfx
+    volumes:
+      - ./certs:/https:ro
+
+  web-mvc:
+    image: zeze-solutions/zeze-webmvc:latest
+    container_name: zeze-webmvc
+    build:
+      context: ../src
+      dockerfile: ./web/WebZeZe/Dockerfile
+    restart: always
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://*:5001
+
+  nginx-server:
+    image: zeze-solutions/zeze-nginx-server:latest
+    container_name: zeze-nginx-server
+    build:
+      context: ./
+      dockerfile: ./nginx/Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
